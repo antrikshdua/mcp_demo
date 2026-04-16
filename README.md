@@ -27,8 +27,11 @@
 - [Server Commands](#server-commands)
 - [Agent Commands](#agent-commands)
 - [Available Tools](#available-tools)
+  - [BigQuery Tools](#bigquery-tools)
 - [Available Resources](#available-resources)
 - [Available Prompts](#available-prompts)
+- [BigQuery Endpoints Reference](#bigquery-endpoints-reference)
+- [Agent — BigQuery Integration](#agent--bigquery-integration)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -397,27 +400,27 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant U as User (terminal)
-    participant CLI as agent/cli.py
-    participant Loop as agent/agent_loop.py
-    participant LLM as LM Studio (local LLM)
-    participant MCP as core/server.py (FastMCP)
-    participant BQ as bigquery/client.py
+    participant U as User terminal
+    participant CLI as agent cli.py
+    participant AgentLoop as agent agent_loop.py
+    participant LLM as LM Studio local LLM
+    participant MCP as core server.py FastMCP
+    participant BQ as bigquery client.py
     participant GCP as Google Cloud BigQuery
 
     U->>CLI: typed message
-    CLI->>Loop: run_agent_loop(messages)
-    Loop->>LLM: POST /v1/chat/completions
-    LLM-->>Loop: tool_call: bq_run_query(sql)
-    Loop->>MCP: in-process client.call_tool("bq_run_query", {sql})
-    MCP->>BQ: run_query(sql)
-    BQ->>GCP: asyncio.to_thread(client.query(...))
-    GCP-->>BQ: QueryJob → rows
-    BQ-->>MCP: list[dict] rows
-    MCP-->>Loop: tool result
-    Loop->>LLM: append tool result, re-call
-    LLM-->>Loop: final assistant message
-    Loop-->>CLI: response text
+    CLI->>AgentLoop: run_agent
+    AgentLoop->>LLM: POST /v1/chat/completions
+    LLM-->>AgentLoop: tool_call bq_run_query
+    AgentLoop->>MCP: in-process call_tool bq_run_query
+    MCP->>BQ: run_query
+    BQ->>GCP: asyncio.to_thread client.query
+    GCP-->>BQ: QueryJob rows
+    BQ-->>MCP: list of rows
+    MCP-->>AgentLoop: tool result
+    AgentLoop->>LLM: append result re-call
+    LLM-->>AgentLoop: final assistant message
+    AgentLoop-->>CLI: response text
     CLI-->>U: printed answer
 ```
 
@@ -728,6 +731,18 @@ After mounting, tools are prefixed with their namespace:
 | `utils_http_get` | HTTP GET with status and body preview |
 | `utils_process_items` | Batch process strings with progress |
 
+### BigQuery Tools
+
+> Requires `BIGQUERY_PROJECT_ID` to be set. All tools are prefixed `bq_`.
+
+| Tool | Description |
+|---|---|
+| `bq_run_query` | Execute a read-only BigQuery SQL query (SELECT / WITH). Billing capped per query. |
+| `bq_list_datasets` | List all datasets in the configured project. Honours `BIGQUERY_ALLOWED_DATASETS`. |
+| `bq_list_tables` | List all tables in a dataset with row counts and size estimates. |
+| `bq_get_table` | Get full schema, partition info, primary keys, fill rates, and sample rows for a table. |
+| `bq_vector_search` | Semantic similarity search using `ML.GENERATE_EMBEDDING` + `VECTOR_SEARCH`. Pass empty `query_text` to discover embedding-enabled tables. |
+
 ## Available Resources
 
 | URI | Description |
@@ -735,6 +750,7 @@ After mounting, tools are prefixed with their namespace:
 | `config://utils/server` | Server configuration (name, version, features) |
 | `notes://notes/index` | Notes index stub |
 | `notes://notes/{note_id}` | Single note stub (URI template) |
+| `bq://config` | BigQuery configuration (project, location, settings — no secrets) |
 
 ## Available Prompts
 
@@ -742,3 +758,73 @@ After mounting, tools are prefixed with their namespace:
 |---|---|
 | `notes_summarize_notes_prompt` | Summarise notes on a given topic |
 | `utils_debug_error_prompt` | Debug an error with context |
+| `bq_query_builder_prompt` | Generate a BigQuery SQL query for a described goal, with optional dataset hint |
+| `bq_schema_explorer_prompt` | Generate a prompt to explore and describe all tables in a dataset |
+
+---
+
+## BigQuery Endpoints Reference
+
+All BigQuery tools are exposed as MCP tools under the `bq_` namespace and are automatically available to any connected MCP client (Claude Desktop, Cursor, the built-in agent).
+
+### `bq_run_query`
+- **Input**: `query` (SQL string) — must be SELECT or WITH; LIMIT required
+- **Safety**: SQL validator strips comments, blocks all DML/DDL/EXPORT, quote-aware semicolon guard
+- **Billing**: Hard cap via `BIGQUERY_MAX_BYTES_BILLED` (default ~$0.50/query)
+- **Output**: `{success, rows, row_count, bytes_processed, cache_hit}`
+
+### `bq_list_datasets`
+- **Input**: none
+- **Access control**: filtered by `BIGQUERY_ALLOWED_DATASETS` if set
+- **Output**: `{success, datasets: [{id, location, created, description}]}`
+
+### `bq_list_tables`
+- **Input**: `dataset_id`
+- **Access control**: blocked if dataset not in allowlist
+- **Output**: `{success, dataset_id, tables: [{id, type, rows, size_mb, created, modified}]}`
+
+### `bq_get_table`
+- **Input**: `dataset_id`, `table_id`, `include_sample_rows` (default true)
+- **Output**: `{success, schema, partition_info, primary_keys, fill_rates, sample_rows}`
+- **Fill rates**: computed from INFORMATION_SCHEMA for non-null percentage per column
+
+### `bq_vector_search`
+- **Input**: `query_text` (empty string = discovery mode), `dataset_id` (optional), `table_id` (optional), `top_k` (default 5)
+- **Requires**: `BIGQUERY_VECTOR_SEARCH_ENABLED=true` and `BIGQUERY_EMBEDDING_MODEL` set
+- **Discovery mode**: returns all tables with embedding columns via INFORMATION_SCHEMA cache
+- **Search mode**: runs `ML.GENERATE_EMBEDDING` + `VECTOR_SEARCH` and returns ranked results
+- **Output**: `{success, results: [{content, score, metadata}]}` or `{success, embedding_tables}`
+
+---
+
+## Agent — BigQuery Integration
+
+The built-in agent (`agent/`) automatically gains access to all `bq_*` tools when `BIGQUERY_PROJECT_ID` is configured. No code changes are needed — tools are discovered at agent startup via MCP's `tools/list`.
+
+### What changed in the agent for BigQuery
+
+| Component | Change |
+|---|---|
+| `agent/config.py` — `SYSTEM_PROMPT` | Added BigQuery rules: always explore before querying, always include LIMIT, never write DML, report `success=false` errors to user, use `bq_vector_search` with empty text for discovery |
+| Tool discovery (automatic) | `chat_session.py` calls `list_tools()` at startup — `bq_*` tools appear automatically when BigQuery is enabled |
+| No other agent files changed | The agent loop, tool converter, and CLI are BigQuery-agnostic |
+
+### Recommended agent workflow for BigQuery
+
+```
+1. bq_list_datasets          → discover available datasets
+2. bq_list_tables(dataset)   → see tables, row counts, sizes
+3. bq_get_table(dataset, t)  → inspect schema, fill rates, sample rows
+4. bq_run_query(sql)         → run a SELECT with LIMIT
+```
+
+### Example agent queries
+
+```
+You: What datasets are in my BigQuery project?
+You: Show me the schema of analytics.events
+You: How many rows are in the orders table in the sales dataset?
+You: Run this query: SELECT country, COUNT(*) as n FROM analytics.users GROUP BY 1 ORDER BY 2 DESC LIMIT 10
+You: What tables have embedding columns I can search semantically?
+You: Find products similar to 'wireless noise-cancelling headphones'
+```
