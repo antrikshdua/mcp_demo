@@ -5,7 +5,7 @@
 This module implements a local LLM agent that connects to the FastMCP server
 in-process and uses its tools to answer user questions. It bridges a local
 language model (running in LM Studio) with the MCP tool ecosystem -- the model
-can call any registered MCP tool (math, notes, utils) as part of its reasoning.
+can call any registered MCP tool (notes, utils, BigQuery) as part of its reasoning.
 
 ## Why It Exists Separately
 
@@ -108,12 +108,12 @@ python -m agent.cli --query "Add 987 and 654, then multiply by 3" --verbose
 
 ```
 Connecting to MCP server (in-process)...
-  Loaded 14 tools: ['math_add', 'math_subtract', ...]
+  Loaded 9 tools: ['notes_create_note', 'notes_get_note', ...]
   LM Studio URL : http://localhost:1234/v1
   Model         : local-model
 
 Type your message and press Enter.  Type 'quit' or 'exit' to stop.
 
 You: What is 15 factorial?
-  [tool] math_factorial({"n":15})
+  [tool] bq_run_query({"query": "SELECT ..."})
   [result] 1307674368000

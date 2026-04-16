@@ -7,11 +7,15 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import httpx
 from fastmcp import FastMCP
 
 from schemas.models import NoteResult
+
+if TYPE_CHECKING:
+    from bigquery.client import BigQueryDatabase
 
 
 @dataclass
@@ -25,6 +29,8 @@ class AppState:
     notes_db: dict[str, NoteResult] = field(default_factory=dict)
     request_count: int = 0
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # BigQuery — None when BIGQUERY_PROJECT_ID is not set (disabled gracefully)
+    bigquery_db: "BigQueryDatabase | None" = None
 
 
 @asynccontextmanager
@@ -41,7 +47,26 @@ async def app_lifespan(server: FastMCP):
         follow_redirects=True,
     )
 
-    state = AppState(http_client=http_client)
+    # ── BigQuery (optional) ───────────────────────────────────────────────────
+    bigquery_db = None
+    try:
+        from bigquery.config import get_bigquery_config
+        bq_cfg = get_bigquery_config()
+        if bq_cfg is not None:
+            from bigquery.client import BigQueryDatabase
+            from bigquery.auth import validate_authentication
+            bigquery_db = BigQueryDatabase(bq_cfg)
+            if bq_cfg.check_auth_on_startup:
+                await validate_authentication(
+                    bigquery_db.client, bq_cfg.project_id, bq_cfg.location
+                )
+            print(f"[lifespan] BigQuery enabled (project={bq_cfg.project_id})")
+        else:
+            print("[lifespan] BigQuery disabled (BIGQUERY_PROJECT_ID not set)")
+    except ImportError:
+        print("[lifespan] BigQuery disabled (google-cloud-bigquery not installed)")
+
+    state = AppState(http_client=http_client, bigquery_db=bigquery_db)
 
     # Seed some demo data
     seed_notes = [
