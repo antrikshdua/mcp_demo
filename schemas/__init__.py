@@ -1,1 +1,1 @@
-from .models import NoteCreate, NoteResult, SearchQuery, MathOp, WeatherQuery
+from .models import NoteCreate, NoteResult, SearchQuery, WeatherQuery

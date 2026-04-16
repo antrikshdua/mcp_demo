@@ -13,7 +13,8 @@ from core.lifespan import app_lifespan
 from middlewares import AuditMiddleware, RequestCounterMiddleware
 
 # Import sub-servers (tools are registered at import time)
-from api.v1 import math_mcp, notes_mcp, utils_mcp
+from api.v1 import notes_mcp, utils_mcp
+from api.v1.bigquery import bigquery_mcp
 
 # Import resources and prompts so their decorators register on sub-servers
 import resources.resources  # noqa: F401
@@ -41,8 +42,10 @@ def create_server() -> FastMCP:
         name="ProductionDemoServer",
         instructions=(
             "A production-grade FastMCP demo server. "
-            "Provides note management (create/search/delete), math utilities, "
-            "and general-purpose tools. "
+            "Provides note management (create/search/delete), "
+            "general-purpose tools, and BigQuery data access. "
+            "BigQuery tools are prefixed with 'bq_'. "
+            "Always use LIMIT clauses in BigQuery queries. "
             "Start by listing available tools with tools/list."
         ),
         version="1.0.0",
@@ -56,9 +59,9 @@ def create_server() -> FastMCP:
     )
 
     # Mount sub-servers with namespaces
-    mcp.mount(math_mcp,  namespace="math")
-    mcp.mount(notes_mcp, namespace="notes")
-    mcp.mount(utils_mcp, namespace="utils")
+    mcp.mount(notes_mcp,    namespace="notes")
+    mcp.mount(utils_mcp,    namespace="utils")
+    mcp.mount(bigquery_mcp, namespace="bq")
 
     # Register custom HTTP routes
     register_routes(mcp)

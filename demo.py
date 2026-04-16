@@ -32,30 +32,6 @@ async def run_demo(mcp) -> None:
         print(f"[templates] {[str(t.uriTemplate) for t in templates]}")
         print(f"[prompts]   {[p.name for p in prompts]}")
 
-        # -- Math tools --------------------------------------------
-        print("\n-- Math ---------------------------------------------")
-
-        r = await client.call_tool("math_add",      {"op": {"a": 10,  "b": 3}})
-        print(f"  add(10, 3)          = {float(r.content[0].text)}")
-
-        r = await client.call_tool("math_subtract", {"op": {"a": 10,  "b": 3}})
-        print(f"  subtract(10, 3)     = {float(r.content[0].text)}")
-
-        r = await client.call_tool("math_multiply", {"op": {"a": 6,   "b": 7}})
-        print(f"  multiply(6, 7)      = {float(r.content[0].text)}")
-
-        r = await client.call_tool("math_divide",   {"op": {"a": 22,  "b": 7}})
-        print(f"  divide(22, 7)       = {float(r.content[0].text):.4f}")
-
-        r = await client.call_tool("math_factorial", {"n": 10})
-        print(f"  factorial(10)       = {r.content[0].text}")
-
-        # divide by zero -- expect error
-        try:
-            await client.call_tool("math_divide", {"op": {"a": 1, "b": 0}})
-        except Exception as exc:
-            print(f"  divide(1, 0)        -> Error (expected): {exc}")
-
         # -- Notes tools -------------------------------------------
         print("\n-- Notes --------------------------------------------")
 
