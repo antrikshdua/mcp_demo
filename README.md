@@ -1,4 +1,4 @@
-# MCP Tooling (Modular)
+# MCP Tooling Demo
 
 ## What This Is
 
